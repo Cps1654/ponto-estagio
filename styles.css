@@ -1,0 +1,112 @@
+:root {
+  --verde: #1f5f3a;
+  --verde-claro: #e8f2ec;
+  --vermelho: #a8322d;
+  --vermelho-claro: #fbeceb;
+  --ambar: #8a5a00;
+  --fundo: #f4f5f2;
+  --cartao: #ffffff;
+  --texto: #1c211e;
+  --suave: #5d6660;
+  --borda: #dde1dc;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --verde: #5fbf86;
+    --verde-claro: #183324;
+    --vermelho: #ef7d76;
+    --vermelho-claro: #3a1d1b;
+    --ambar: #e7b75a;
+    --fundo: #121513;
+    --cartao: #1c201d;
+    --texto: #e9ece9;
+    --suave: #a2aaa4;
+    --borda: #2f3531;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--fundo);
+  color: var(--texto);
+  font-size: 17px;
+  line-height: 1.4;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+[hidden] { display: none !important; }
+
+.topo {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: calc(12px + env(safe-area-inset-top)) 16px 12px;
+  background: var(--verde); color: #fff;
+}
+@media (prefers-color-scheme: dark) { .topo { background: #173d27; } }
+.topo h1 { font-size: 1.15rem; margin: 0; }
+.rede { font-size: .8rem; padding: 3px 10px; border-radius: 99px; background: rgba(255,255,255,.18); }
+.rede.offline { background: #c77700; }
+
+.tela { max-width: 520px; margin: 0 auto; padding: 16px; }
+.cartao {
+  background: var(--cartao); border: 1px solid var(--borda); border-radius: 14px;
+  padding: 18px; margin-bottom: 16px;
+}
+h2 { font-size: 1.1rem; margin: 0 0 12px; }
+label { display: block; margin-bottom: 14px; font-weight: 600; font-size: .95rem; }
+input {
+  display: block; width: 100%; margin-top: 6px; padding: 12px; font-size: 1.1rem;
+  border: 1px solid var(--borda); border-radius: 10px; background: var(--fundo); color: var(--texto);
+}
+
+.btn {
+  display: block; width: 100%; border: 0; border-radius: 12px; padding: 14px;
+  font-size: 1rem; font-weight: 700; cursor: pointer; text-align: center;
+  background: var(--borda); color: var(--texto);
+}
+.btn:disabled { opacity: .5; }
+.btn.primario { background: var(--verde); color: #fff; }
+.btn.secundario { background: rgba(255,255,255,.15); color: #fff; margin: 12px 0 0; }
+.btn.grande { padding: 22px 14px; font-size: 1.15rem; }
+.btn.entrada { background: var(--verde); color: #fff; }
+.btn.saida { background: var(--vermelho); color: #fff; }
+.btn.sugerido { outline: 4px solid var(--ambar); outline-offset: 2px; }
+.btn.pequeno { width: auto; padding: 8px 14px; font-size: .9rem; }
+.btn.link { background: none; color: var(--suave); font-weight: 500; text-decoration: underline; }
+.btn.link.claro { color: #ddd; }
+.botoes { display: grid; gap: 12px; }
+@media (prefers-color-scheme: dark) { .btn.primario, .btn.entrada, .btn.saida { color: #0d120f; } }
+
+.linha { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.linha h2 { margin: 0; }
+.ola { margin: 0 0 4px; }
+.estado { margin: 0 0 16px; color: var(--suave); }
+.dica { color: var(--suave); font-size: .88rem; }
+.dica.claro { color: #ddd; }
+.centro { text-align: center; }
+.erro { color: var(--vermelho); font-weight: 600; min-height: 1.2em; }
+
+.historico { list-style: none; padding: 0; margin: 8px 0 0; }
+.historico li {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center;
+  padding: 10px 0; border-top: 1px solid var(--borda); font-size: .93rem;
+}
+.tag { font-size: .75rem; font-weight: 700; padding: 3px 8px; border-radius: 6px; }
+.tag.entrada { background: var(--verde-claro); color: var(--verde); }
+.tag.saida { background: var(--vermelho-claro); color: var(--vermelho); }
+.sync { font-size: .78rem; color: var(--suave); white-space: nowrap; }
+.sync.pendente { color: var(--ambar); font-weight: 700; }
+.sub { display: block; color: var(--suave); font-size: .8rem; }
+
+.sobreposicao {
+  position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.92); padding: 16px;
+}
+.scanner { width: 100%; max-width: 420px; text-align: center; color: #fff; }
+.scanner-titulo { font-weight: 700; font-size: 1.1rem; }
+.video-caixa { position: relative; width: 100%; aspect-ratio: 1; border-radius: 16px; overflow: hidden; background: #000; }
+.video-caixa video { width: 100%; height: 100%; object-fit: cover; }
+.mira { position: absolute; inset: 18%; border: 3px solid rgba(255,255,255,.85); border-radius: 14px; }
+
+.resultado { max-width: 400px; width: 100%; text-align: center; }
+.res-icone { font-size: 3rem; line-height: 1; margin-bottom: 8px; }
+.resultado p { white-space: pre-line; }

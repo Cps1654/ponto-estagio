@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QR dos Locais</title>
+  <style>
+    :root { --verde: #1f5f3a; --borda: #ccd2cc; --fundo: #f4f5f2; --texto: #1c211e; --cartao: #fff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--fundo); color: var(--texto); }
+    .painel { max-width: 860px; margin: 0 auto; padding: 16px; }
+    h1 { font-size: 1.3rem; color: var(--verde); }
+    textarea { width: 100%; min-height: 130px; font: 14px ui-monospace, Consolas, monospace; padding: 10px; border: 1px solid var(--borda); border-radius: 8px; }
+    button { background: var(--verde); color: #fff; border: 0; border-radius: 8px; padding: 12px 18px; font-weight: 700; font-size: 1rem; cursor: pointer; margin: 10px 8px 0 0; }
+    .erro { color: #a8322d; font-weight: 600; }
+    .folhas { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; padding: 16px; max-width: 860px; margin: 0 auto; }
+    .folha { background: var(--cartao); border: 2px dashed var(--borda); border-radius: 12px; padding: 24px; text-align: center; break-inside: avoid; page-break-inside: avoid; }
+    .folha h2 { margin: 0 0 4px; font-size: 1.5rem; }
+    .folha .id { color: #666; font-size: .85rem; margin: 0 0 12px; }
+    .folha img { width: 100%; max-width: 300px; image-rendering: pixelated; }
+    .folha .instr { font-size: .95rem; margin: 12px 0 0; }
+    @media print {
+      body { background: #fff; }
+      .painel { display: none; }
+      .folhas { display: block; padding: 0; }
+      .folha { border: 0; page-break-after: always; padding-top: 60px; }
+      .folha h2 { font-size: 2.2rem; }
+      .folha img { max-width: 420px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="painel">
+    <h1>QR codes dos locais de estágio</h1>
+    <p>Na planilha, aba <strong>Locais</strong>, selecione as linhas (das colunas <em>ID</em> até <em>Codigo_QR</em>), copie e cole aqui.
+       Tudo é gerado neste navegador: os códigos não são enviados a nenhum site.</p>
+    <textarea id="entrada" placeholder="LAB1&#9;Lab de Botânica&#9;-9.9526&#9;-67.8650&#9;80&#9;a1b2c3d4e5f6a7b8"></textarea>
+    <button id="gerar">Gerar QR codes</button>
+    <button id="imprimir">Imprimir (1 por página)</button>
+    <p id="erro" class="erro"></p>
+  </div>
+  <div id="folhas" class="folhas"></div>
+
+  <script src="vendor/qrcode.js"></script>
+  <script>
+    document.getElementById('gerar').onclick = function () {
+      var erros = [], alvo = document.getElementById('folhas');
+      alvo.innerHTML = '';
+      document.getElementById('entrada').value.split(/\r?\n/).forEach(function (linha, i) {
+        if (!linha.trim()) return;
+        var c = linha.split('\t');
+        var id = (c[0] || '').trim(), nome = (c[1] || '').trim(), codigo = (c[5] || '').trim();
+        if (!id || !codigo) { erros.push('Linha ' + (i + 1) + ': faltam ID ou Codigo_QR (use o menu "Gerar códigos QR" na planilha).'); return; }
+        if (id.indexOf(':') >= 0) { erros.push('Linha ' + (i + 1) + ': o ID não pode ter ":".'); return; }
+        var qr = qrcode(0, 'M');
+        qr.addData('PONTOEST:' + id + ':' + codigo);
+        qr.make();
+        var div = document.createElement('div');
+        div.className = 'folha';
+        var h = document.createElement('h2'); h.textContent = nome || id;
+        var p = document.createElement('p'); p.className = 'id'; p.textContent = 'Local ' + id;
+        var img = document.createElement('img'); img.src = qr.createDataURL(10, 4); img.alt = 'QR do local ' + id;
+        var ins = document.createElement('p'); ins.className = 'instr';
+        ins.textContent = 'Estagiário: abra o app Ponto Estágio, toque em ENTRADA ou SAÍDA e escaneie este código.';
+        div.append(h, p, img, ins);
+        alvo.appendChild(div);
+      });
+      document.getElementById('erro').textContent = erros.join(' ');
+    };
+    document.getElementById('imprimir').onclick = function () { window.print(); };
+  </script>
+</body>
+</html>

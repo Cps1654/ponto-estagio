@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Ponto Estágio</title>
+  <meta name="theme-color" content="#1f5f3a">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Ponto">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topo">
+    <h1>Ponto Estágio</h1>
+    <span id="rede" class="rede">…</span>
+  </header>
+
+  <!-- Login -->
+  <main id="tela-login" class="tela" hidden>
+    <form id="form-login" class="cartao">
+      <h2>Entrar</h2>
+      <label>Matrícula
+        <input id="matricula" inputmode="numeric" autocomplete="username" required>
+      </label>
+      <label>PIN
+        <input id="pin" type="password" inputmode="numeric" autocomplete="current-password" required>
+      </label>
+      <button type="submit" class="btn primario">Entrar</button>
+      <p class="dica">O primeiro acesso precisa de internet. Depois o app funciona offline.</p>
+      <p id="erro-login" class="erro" role="alert"></p>
+    </form>
+  </main>
+
+  <!-- Principal -->
+  <main id="tela-principal" class="tela" hidden>
+    <section class="cartao">
+      <p class="ola">Olá, <strong id="nome-aluno"></strong></p>
+      <p id="estado" class="estado"></p>
+      <div class="botoes">
+        <button id="btn-entrada" class="btn grande entrada">Registrar ENTRADA</button>
+        <button id="btn-saida" class="btn grande saida">Registrar SAÍDA</button>
+      </div>
+    </section>
+
+    <section class="cartao">
+      <div class="linha">
+        <h2>Meus registros</h2>
+        <button id="btn-sync" class="btn pequeno">Sincronizar</button>
+      </div>
+      <p id="pendentes" class="dica"></p>
+      <ul id="historico" class="historico"></ul>
+    </section>
+
+    <button id="btn-sair" class="btn link">Sair desta conta</button>
+    <p id="instalar" class="dica centro"></p>
+  </main>
+
+  <!-- Leitor de QR -->
+  <div id="tela-scanner" class="sobreposicao" hidden>
+    <div class="scanner">
+      <p id="scanner-titulo" class="scanner-titulo">Aponte para o QR do local</p>
+      <div class="video-caixa">
+        <video id="video" playsinline muted></video>
+        <div class="mira"></div>
+      </div>
+      <p id="scanner-status" class="dica claro">Abrindo câmera…</p>
+      <label class="btn secundario">
+        Tirar foto do QR
+        <input id="foto-qr" type="file" accept="image/*" capture="environment" hidden>
+      </label>
+      <button id="btn-cancelar" class="btn link claro">Cancelar</button>
+    </div>
+    <canvas id="canvas" hidden></canvas>
+  </div>
+
+  <!-- Resultado -->
+  <div id="tela-resultado" class="sobreposicao" hidden>
+    <div class="cartao resultado">
+      <div id="res-icone" class="res-icone"></div>
+      <h2 id="res-titulo"></h2>
+      <p id="res-detalhe"></p>
+      <button id="btn-ok" class="btn primario">OK</button>
+    </div>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="vendor/jsQR.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
