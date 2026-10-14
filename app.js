@@ -5,7 +5,8 @@
 
   var API = window.PONTO_CONFIG.API_URL;
   var QR_PREFIXO = 'PONTOEST';
-  var K = { sessao: 'ponto.sessao', fila: 'ponto.fila', hist: 'ponto.historico' };
+  var K = { sessao: 'ponto.sessao', fila: 'ponto.fila', hist: 'ponto.historico', rascunho: 'ponto.rascunhoAtividades' };
+  var MIN_ATIVIDADES = 10;
   var $ = function (id) { return document.getElementById(id); };
 
   // ------------------------------------------------------------ armazenamento local
@@ -169,9 +170,47 @@
       return;
     }
     tipoAtual = tipo;
+    atividadesAtual = '';
+    if (tipo === 'saida') { abrirAtividades(); return; }
+    iniciarLeitura();
+  }
+
+  function iniciarLeitura() {
     gpsPromessa = obterGps(); // começa o GPS junto com a câmera para ganhar tempo
     abrirScanner();
   }
+
+  // ------------------------------------------------------------ atividades do dia (antes da saída)
+
+  var atividadesAtual = '';
+
+  function atualizarContador() {
+    var n = $('atividades').value.trim().length;
+    $('contador').textContent = n < MIN_ATIVIDADES ? 'Mínimo de ' + MIN_ATIVIDADES + ' caracteres (' + n + ').' : n + '/1000';
+  }
+
+  function abrirAtividades() {
+    $('atividades').value = ler(K.rascunho, '') || '';
+    atualizarContador();
+    $('tela-atividades').hidden = false;
+    $('atividades').focus();
+  }
+
+  $('atividades').addEventListener('input', function () {
+    gravar(K.rascunho, this.value); // não perde o texto se o aluno cancelar ou fechar o app
+    atualizarContador();
+  });
+
+  $('form-atividades').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var txt = $('atividades').value.trim();
+    if (txt.length < MIN_ATIVIDADES) { atualizarContador(); $('atividades').focus(); return; }
+    atividadesAtual = txt;
+    $('tela-atividades').hidden = true;
+    iniciarLeitura();
+  });
+
+  $('btn-cancelar-ativ').addEventListener('click', function () { $('tela-atividades').hidden = true; });
 
   $('btn-entrada').addEventListener('click', function () { baterPonto('entrada'); });
   $('btn-saida').addEventListener('click', function () { baterPonto('saida'); });
@@ -211,8 +250,10 @@
       var b = {
         id: uuid(), tipo: tipoAtual, deviceTime: deviceTime, qr: info.texto,
         localNome: info.local.nome, lat: gps.lat, lng: gps.lng, acc: gps.acc, gpsTime: gps.gpsTime,
-        gpsErro: gps.erro || '', lastServerTime: sessao.lastServerTime, offline: !navigator.onLine
+        gpsErro: gps.erro || '', lastServerTime: sessao.lastServerTime, offline: !navigator.onLine,
+        atividades: tipoAtual === 'saida' ? atividadesAtual : ''
       };
+      if (b.atividades) localStorage.removeItem(K.rascunho);
       if (gps.lat != null) b.distancia = Math.round(distanciaM(gps.lat, gps.lng, info.local.lat, info.local.lng));
 
       var fila = ler(K.fila, []); fila.push(b); gravar(K.fila, fila);

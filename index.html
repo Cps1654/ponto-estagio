@@ -78,6 +78,19 @@
     <canvas id="canvas" hidden></canvas>
   </div>
 
+  <!-- Atividades do dia (antes da saída) -->
+  <div id="tela-atividades" class="sobreposicao" hidden>
+    <form id="form-atividades" class="cartao resultado">
+      <h2>O que você fez hoje?</h2>
+      <p class="dica">Descreva brevemente as atividades do estágio antes de registrar a saída.</p>
+      <textarea id="atividades" rows="5" maxlength="1000" required
+        placeholder="Ex.: preparo de lâminas, leitura de artigo, coleta no viveiro…"></textarea>
+      <p id="contador" class="dica"></p>
+      <button type="submit" class="btn saida">Continuar para o QR</button>
+      <button type="button" id="btn-cancelar-ativ" class="btn link">Cancelar</button>
+    </form>
+  </div>
+
   <!-- Resultado -->
   <div id="tela-resultado" class="sobreposicao" hidden>
     <div class="cartao resultado">
