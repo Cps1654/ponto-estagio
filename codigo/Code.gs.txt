@@ -1,0 +1,387 @@
+/**
+ * Ponto Eletrônico de Estágio — backend em Google Apps Script.
+ *
+ * Abas da planilha:
+ *   Alunos     – cadastro (Matricula, Nome, PIN, Ativo)
+ *   Locais     – locais de estágio (ID, Nome, Latitude, Longitude, Raio_m, Codigo_QR)
+ *   Registros  – cada batida recebida do app (não editar à mão)
+ *   Jornadas   – pares entrada/saída calculados
+ *   Resumo     – horas por aluno
+ *   Alertas    – batidas suspeitas ou incompletas
+ *
+ * API (POST com corpo JSON, Content-Type text/plain):
+ *   {action:"login", matricula, pin}
+ *   {action:"sync", matricula, token, clientNow, registros:[...]}
+ */
+
+var CFG = {
+  TOLERANCIA_RELOGIO_MIN: 5,     // diferença aceitável entre relógio do celular e do servidor
+  PRECISAO_GPS_MAX_M: 150,       // acima disso o GPS é considerado impreciso
+  SYNC_TARDIO_H: 12,             // batida enviada muito depois de feita (só informativo)
+  JORNADA_MAX_H: 14,             // entrada e saída mais distantes que isso não formam jornada
+  QR_PREFIXO: 'PONTOEST'
+};
+
+var ABAS = {
+  Alunos: ['Matricula', 'Nome', 'PIN', 'Ativo'],
+  Locais: ['ID', 'Nome', 'Latitude', 'Longitude', 'Raio_m', 'Codigo_QR'],
+  Registros: ['ID', 'Matricula', 'Nome', 'Tipo', 'Hora_aparelho', 'Hora_corrigida', 'Recebido_em',
+    'Desvio_relogio_min', 'Local', 'Latitude', 'Longitude', 'Precisao_m', 'Distancia_m',
+    'Enviado_offline', 'Status', 'Observacao', 'Atividades', 'Modalidade'],
+  Jornadas: ['Matricula', 'Nome', 'Data', 'Entrada', 'Saida', 'Horas', 'Local', 'Modalidade', 'Status', 'Observacao', 'Atividades'],
+  Resumo: ['Matricula', 'Nome', 'Horas_presenciais', 'Horas_remotas', 'Horas_com_alerta', 'Horas_mes_atual',
+    'Horas_semana_atual', 'Jornadas', 'Batidas_incompletas', 'Alertas', 'Ultima_batida'],
+  Alertas: ['Hora', 'Matricula', 'Nome', 'Tipo', 'Detalhe', 'ID_registro']
+};
+
+// ---------------------------------------------------------------- menu / setup
+
+function onOpen() {
+  SpreadsheetApp.getUi().createMenu('Ponto Estágio')
+    .addItem('1. Configurar planilha', 'configurarPlanilha')
+    .addItem('2. Gerar PINs que faltam', 'gerarPins')
+    .addItem('3. Gerar códigos QR dos locais', 'gerarCodigosQr')
+    .addSeparator()
+    .addItem('Recalcular jornadas e resumo', 'recalcular')
+    .addToUi();
+}
+
+function configurarPlanilha() {
+  var ss = SpreadsheetApp.getActive();
+  Object.keys(ABAS).forEach(function (nome) {
+    var sh = ss.getSheetByName(nome) || ss.insertSheet(nome);
+    var cab = ABAS[nome];
+    sh.getRange(1, 1, 1, cab.length).setValues([cab]).setFontWeight('bold').setBackground('#e8f0e8');
+    sh.setFrozenRows(1);
+  });
+  ss.getSheetByName('Alunos').getRange('A:A').setNumberFormat('@'); // matrícula como texto
+  ss.getSheetByName('Alunos').getRange('C:C').setNumberFormat('@'); // PIN com zeros à esquerda
+  var padrao = ss.getSheetByName('Página1') || ss.getSheetByName('Sheet1');
+  if (padrao && ss.getSheets().length > 1 && padrao.getLastRow() === 0) ss.deleteSheet(padrao);
+  segredo_(); // cria o segredo de assinatura
+  SpreadsheetApp.getUi().alert('Planilha configurada. Preencha as abas Alunos e Locais e use os itens 2 e 3 do menu.');
+}
+
+function gerarPins() {
+  var sh = SpreadsheetApp.getActive().getSheetByName('Alunos');
+  var dados = sh.getDataRange().getValues();
+  var n = 0;
+  for (var i = 1; i < dados.length; i++) {
+    if (String(dados[i][0]).trim() && !String(dados[i][2]).trim()) {
+      var pin = String(Math.floor(100000 + Math.random() * 900000));
+      sh.getRange(i + 1, 3).setValue(pin);
+      if (!String(dados[i][3]).trim()) sh.getRange(i + 1, 4).setValue('SIM');
+      n++;
+    }
+  }
+  SpreadsheetApp.getUi().alert(n + ' PIN(s) gerado(s). Entregue cada PIN ao aluno pessoalmente.');
+}
+
+function gerarCodigosQr() {
+  var sh = SpreadsheetApp.getActive().getSheetByName('Locais');
+  var dados = sh.getDataRange().getValues();
+  var n = 0;
+  for (var i = 1; i < dados.length; i++) {
+    if (String(dados[i][0]).trim() && !String(dados[i][5]).trim()) {
+      sh.getRange(i + 1, 6).setValue(Utilities.getUuid().replace(/-/g, '').slice(0, 16));
+      n++;
+    }
+  }
+  SpreadsheetApp.getUi().alert(n + ' código(s) gerado(s). Use a página qr.html do app para imprimir os QR.');
+}
+
+// ---------------------------------------------------------------- web app
+
+function doGet() {
+  return json_({ ok: true, servico: 'ponto-estagio', serverTime: Date.now() });
+}
+
+function doPost(e) {
+  try {
+    var req = JSON.parse(e.postData.contents);
+    if (req.action === 'login') return json_(login_(req));
+    if (req.action === 'sync') return json_(sync_(req));
+    return json_({ ok: false, erro: 'Ação desconhecida' });
+  } catch (err) {
+    return json_({ ok: false, erro: String(err && err.message || err) });
+  }
+}
+
+function login_(req) {
+  var aluno = buscarAluno_(req.matricula);
+  if (!aluno || aluno.pin !== String(req.pin).trim()) return { ok: false, erro: 'Matrícula ou PIN incorretos' };
+  if (!aluno.ativo) return { ok: false, erro: 'Cadastro inativo. Fale com o professor.' };
+  return {
+    ok: true,
+    token: token_(aluno),
+    nome: aluno.nome,
+    matricula: aluno.matricula,
+    locais: lerLocais_().map(function (l) { return { id: l.id, nome: l.nome, lat: l.lat, lng: l.lng, raio: l.raio }; }),
+    serverTime: Date.now()
+  };
+}
+
+function sync_(req) {
+  var recebido = Date.now();
+  var aluno = buscarAluno_(req.matricula);
+  if (!aluno || !aluno.ativo || req.token !== token_(aluno)) {
+    return { ok: false, erro: 'Sessão inválida. Entre novamente com matrícula e PIN.', relogin: true };
+  }
+  var lock = LockService.getScriptLock();
+  lock.waitLock(25000);
+  try {
+    var ss = SpreadsheetApp.getActive();
+    var shReg = ss.getSheetByName('Registros');
+    var ultima = shReg.getLastRow();
+    var existentes = {};
+    if (ultima > 1) shReg.getRange(2, 1, ultima - 1, 1).getValues().forEach(function (r) { existentes[r[0]] = true; });
+
+    var locais = {};
+    lerLocais_().forEach(function (l) { locais[l.id] = l; });
+    var desvio = recebido - Number(req.clientNow || recebido);
+
+    var aceitos = [], linhas = [];
+    (req.registros || []).forEach(function (r) {
+      aceitos.push(r.id);
+      if (!r.id || existentes[r.id]) return; // já gravado (reenvio)
+      existentes[r.id] = true;
+      var av = avaliarBatida(r, locais, desvio, recebido, CFG);
+      linhas.push([r.id, aluno.matricula, aluno.nome, r.tipo, new Date(Number(r.deviceTime)),
+        new Date(av.horaCorrigida), new Date(recebido), Math.round(desvio / 60000),
+        av.localNome, num_(r.lat), num_(r.lng), num_(r.acc), av.distancia,
+        r.offline ? 'SIM' : 'NAO', av.status, av.obs.join('; '), String(r.atividades || '').slice(0, 1000),
+        r.modo === 'remoto' ? 'REMOTO' : 'PRESENCIAL']);
+    });
+    if (linhas.length) {
+      shReg.getRange(shReg.getLastRow() + 1, 1, linhas.length, linhas[0].length).setValues(linhas);
+      shReg.getRange(2, 5, shReg.getLastRow() - 1, 3).setNumberFormat('dd/MM/yyyy HH:mm:ss');
+      recalcular();
+    }
+    return { ok: true, aceitos: aceitos, serverTime: Date.now() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ---------------------------------------------------------------- regras (funções puras)
+
+/** Avalia uma batida e devolve hora corrigida, distância ao local e lista de alertas. */
+function avaliarBatida(r, locais, desvioMs, recebido, cfg) {
+  var obs = [];
+  var horaCorrigida = Number(r.deviceTime) + desvioMs;
+
+  if (Math.abs(desvioMs) > cfg.TOLERANCIA_RELOGIO_MIN * 60000) {
+    obs.push('RELOGIO_DIVERGENTE: celular estava ' + Math.round(desvioMs / 60000) + ' min diferente do servidor');
+  }
+  if (r.lastServerTime && Number(r.deviceTime) < Number(r.lastServerTime) - 60000) {
+    obs.push('RELOGIO_RETROCEDIDO: hora da batida é anterior à última sincronização');
+  }
+  if (horaCorrigida > recebido + 120000) obs.push('HORA_NO_FUTURO');
+
+  var info = [];
+  if (recebido - horaCorrigida > cfg.SYNC_TARDIO_H * 3600000) info.push('enviado ' + Math.round((recebido - horaCorrigida) / 3600000) + ' h depois (offline)');
+
+  // trabalho remoto: sem QR nem raio; o GPS fica só como informação
+  if (r.modo === 'remoto') {
+    if (r.lat == null || r.lat === '') info.push('remoto sem GPS' + (r.gpsErro ? ': ' + r.gpsErro : ''));
+    return { horaCorrigida: horaCorrigida, localNome: 'Remoto', distancia: '', status: obs.length ? 'ALERTA' : 'OK', obs: obs.concat(info) };
+  }
+
+  var qr = parseQr(r.qr, cfg.QR_PREFIXO);
+  var local = qr && locais[qr.id];
+  var localNome = local ? local.nome : (qr ? qr.id : '');
+  if (!qr) obs.push('QR_INVALIDO');
+  else if (!local) obs.push('LOCAL_DESCONHECIDO');
+  else if (String(local.codigo) !== qr.codigo) obs.push('QR_CODIGO_ERRADO');
+
+  var distancia = '';
+  if (r.lat == null || r.lng == null || r.lat === '' || r.lng === '') {
+    obs.push('SEM_GPS' + (r.gpsErro ? ': ' + r.gpsErro : ''));
+  } else if (local) {
+    distancia = Math.round(distanciaM(Number(r.lat), Number(r.lng), local.lat, local.lng));
+    var acc = Number(r.acc) || 0;
+    if (distancia - Math.min(acc, cfg.PRECISAO_GPS_MAX_M) > local.raio) {
+      obs.push('FORA_DO_RAIO: ' + distancia + ' m do local (raio ' + local.raio + ' m)');
+    }
+    if (acc > cfg.PRECISAO_GPS_MAX_M) obs.push('GPS_IMPRECISO: ±' + Math.round(acc) + ' m');
+  }
+
+  return {
+    horaCorrigida: horaCorrigida,
+    localNome: localNome,
+    distancia: distancia,
+    status: obs.length ? 'ALERTA' : 'OK',
+    obs: obs.concat(info)
+  };
+}
+
+/** QR no formato PONTOEST:<idLocal>:<codigo> */
+function parseQr(texto, prefixo) {
+  var p = String(texto || '').trim().split(':');
+  if (p.length !== 3 || p[0] !== prefixo || !p[1] || !p[2]) return null;
+  return { id: p[1], codigo: p[2] };
+}
+
+/** Distância em metros entre dois pontos (haversine). */
+function distanciaM(lat1, lng1, lat2, lng2) {
+  var R = 6371000, rad = Math.PI / 180;
+  var dLat = (lat2 - lat1) * rad, dLng = (lng2 - lng1) * rad;
+  var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+/**
+ * Forma jornadas a partir das batidas de UM aluno.
+ * batidas: [{id, tipo:'entrada'|'saida', hora:ms, local, status, obs}]
+ * Devolve {jornadas:[{entrada, saida, horas, local, status, obs}], incompletas:[{batida, motivo}]}
+ */
+function parearJornadas(batidas, jornadaMaxH) {
+  var ord = batidas.slice().sort(function (a, b) { return a.hora - b.hora; });
+  var jornadas = [], incompletas = [], aberta = null;
+  ord.forEach(function (b) {
+    if (b.tipo === 'entrada') {
+      if (aberta) incompletas.push({ batida: aberta, motivo: 'ENTRADA_SEM_SAIDA' });
+      aberta = b;
+    } else if (b.tipo === 'saida') {
+      if (!aberta) { incompletas.push({ batida: b, motivo: 'SAIDA_SEM_ENTRADA' }); return; }
+      var horas = (b.hora - aberta.hora) / 3600000;
+      if (horas > jornadaMaxH) {
+        incompletas.push({ batida: aberta, motivo: 'ENTRADA_SEM_SAIDA' });
+        incompletas.push({ batida: b, motivo: 'SAIDA_SEM_ENTRADA (jornada > ' + jornadaMaxH + ' h)' });
+      } else {
+        var obs = [];
+        if (aberta.status !== 'OK') obs.push('entrada: ' + aberta.obs);
+        if (b.status !== 'OK') obs.push('saída: ' + b.obs);
+        var me = aberta.modo || 'presencial', ms = b.modo || 'presencial';
+        var modalidade = me === ms ? me.toUpperCase() : 'MISTA';
+        if (modalidade === 'MISTA') obs.push('entrada ' + me + ' e saída ' + ms);
+        else if (modalidade === 'PRESENCIAL' && aberta.local && b.local && aberta.local !== b.local) obs.push('entrada e saída em locais diferentes');
+        jornadas.push({
+          entrada: aberta.hora, saida: b.hora, horas: Math.round(horas * 100) / 100,
+          local: aberta.local || b.local, modalidade: modalidade, status: obs.length ? 'ALERTA' : 'OK', obs: obs.join(' | '),
+          atividades: b.atividades || ''
+        });
+      }
+      aberta = null;
+    }
+  });
+  if (aberta) incompletas.push({ batida: aberta, motivo: 'ENTRADA_SEM_SAIDA (em aberto)' });
+  return { jornadas: jornadas, incompletas: incompletas };
+}
+
+// ---------------------------------------------------------------- relatórios
+
+function recalcular() {
+  var ss = SpreadsheetApp.getActive();
+  var reg = ss.getSheetByName('Registros').getDataRange().getValues().slice(1);
+  var porAluno = {}, nomes = {}, alertas = [];
+
+  reg.forEach(function (r) {
+    if (!r[0]) return;
+    var b = { id: r[0], tipo: r[3], hora: new Date(r[5]).getTime(), local: r[8], status: r[14], obs: r[15], atividades: r[16],
+      modo: r[17] === 'REMOTO' ? 'remoto' : 'presencial' };
+    (porAluno[r[1]] = porAluno[r[1]] || []).push(b);
+    nomes[r[1]] = r[2];
+    if (r[14] !== 'OK') alertas.push([new Date(b.hora), r[1], r[2], 'BATIDA_SUSPEITA', r[15], r[0]]);
+  });
+
+  var agora = new Date();
+  var mesAtual = Utilities.formatDate(agora, tz_(), 'yyyy-MM');
+  var inicioSemana = inicioSemana_(agora).getTime();
+  var linhasJ = [], linhasR = [];
+
+  // inclui alunos cadastrados sem batidas no resumo
+  lerAlunos_().forEach(function (a) { if (!porAluno[a.matricula]) { porAluno[a.matricula] = []; nomes[a.matricula] = a.nome; } });
+
+  Object.keys(porAluno).sort().forEach(function (mat) {
+    var res = parearJornadas(porAluno[mat], CFG.JORNADA_MAX_H);
+    var hv = 0, hr = 0, ha = 0, hm = 0, hs = 0, ultima = '';
+    res.jornadas.forEach(function (j) {
+      linhasJ.push([mat, nomes[mat], Utilities.formatDate(new Date(j.entrada), tz_(), 'dd/MM/yyyy'),
+        new Date(j.entrada), new Date(j.saida), j.horas, j.local, j.modalidade, j.status, j.obs, j.atividades]);
+      if (j.status !== 'OK') ha += j.horas;
+      else if (j.modalidade === 'REMOTO') hr += j.horas;
+      else hv += j.horas;
+      if (Utilities.formatDate(new Date(j.entrada), tz_(), 'yyyy-MM') === mesAtual) hm += j.horas;
+      if (j.entrada >= inicioSemana) hs += j.horas;
+    });
+    res.incompletas.forEach(function (x) {
+      alertas.push([new Date(x.batida.hora), mat, nomes[mat], x.motivo, x.batida.tipo + ' em ' + (x.batida.local || '?'), x.batida.id]);
+    });
+    porAluno[mat].forEach(function (b) { if (!ultima || b.hora > ultima) ultima = b.hora; });
+    var nAlertas = alertas.filter(function (a) { return a[1] === mat; }).length;
+    linhasR.push([mat, nomes[mat], r2_(hv), r2_(hr), r2_(ha), r2_(hm), r2_(hs), res.jornadas.length,
+      res.incompletas.length, nAlertas, ultima ? new Date(ultima) : '']);
+  });
+
+  alertas.sort(function (a, b) { return b[0] - a[0]; });
+  escrever_('Jornadas', linhasJ, { 4: 'dd/MM/yyyy HH:mm', 5: 'dd/MM/yyyy HH:mm' });
+  escrever_('Resumo', linhasR, { 11: 'dd/MM/yyyy HH:mm' });
+  escrever_('Alertas', alertas, { 1: 'dd/MM/yyyy HH:mm' });
+}
+
+// ---------------------------------------------------------------- utilitários
+
+function escrever_(aba, linhas, formatos) {
+  var sh = SpreadsheetApp.getActive().getSheetByName(aba);
+  var n = ABAS[aba].length;
+  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, n).clearContent();
+  if (!linhas.length) return;
+  sh.getRange(2, 1, linhas.length, n).setValues(linhas);
+  Object.keys(formatos || {}).forEach(function (col) {
+    sh.getRange(2, Number(col), linhas.length, 1).setNumberFormat(formatos[col]);
+  });
+}
+
+function lerAlunos_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName('Alunos');
+  return sh.getDataRange().getValues().slice(1).filter(function (r) { return String(r[0]).trim(); }).map(function (r) {
+    return {
+      matricula: String(r[0]).trim(), nome: String(r[1]).trim(), pin: String(r[2]).trim(),
+      ativo: String(r[3]).trim().toUpperCase() !== 'NAO' && String(r[3]).trim().toUpperCase() !== 'NÃO'
+    };
+  });
+}
+
+function buscarAluno_(matricula) {
+  var m = String(matricula || '').trim();
+  return lerAlunos_().filter(function (a) { return a.matricula === m; })[0] || null;
+}
+
+function lerLocais_() {
+  var sh = SpreadsheetApp.getActive().getSheetByName('Locais');
+  return sh.getDataRange().getValues().slice(1).filter(function (r) { return String(r[0]).trim(); }).map(function (r) {
+    return {
+      id: String(r[0]).trim(), nome: String(r[1]).trim(), lat: Number(String(r[2]).replace(',', '.')),
+      lng: Number(String(r[3]).replace(',', '.')), raio: Number(r[4]) || 100, codigo: String(r[5]).trim()
+    };
+  });
+}
+
+function segredo_() {
+  var p = PropertiesService.getScriptProperties();
+  var s = p.getProperty('SEGREDO');
+  if (!s) { s = Utilities.getUuid() + Utilities.getUuid(); p.setProperty('SEGREDO', s); }
+  return s;
+}
+
+/** Token muda se o PIN mudar — trocar o PIN derruba a sessão do aluno. */
+function token_(aluno) {
+  var sig = Utilities.computeHmacSha256Signature(aluno.matricula + '|' + aluno.pin, segredo_());
+  return Utilities.base64EncodeWebSafe(sig).replace(/=+$/, '');
+}
+
+function inicioSemana_(d) {
+  var x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  var dia = (x.getDay() + 6) % 7; // segunda = 0
+  x.setDate(x.getDate() - dia);
+  return x;
+}
+
+function tz_() { return Session.getScriptTimeZone(); }
+function r2_(x) { return Math.round(x * 100) / 100; }
+function num_(x) { return x == null || x === '' ? '' : Number(x); }
+function json_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}

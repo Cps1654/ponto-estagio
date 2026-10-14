@@ -3,9 +3,10 @@
 (function () {
   'use strict';
 
-  var API = window.PONTO_CONFIG.API_URL;
+  var CFG = window.PONTO_CONFIG;
+  var TURMAS = CFG.TURMAS || [{ id: 'padrao', nome: 'Professor(a)', api: CFG.API_URL }];
   var QR_PREFIXO = 'PONTOEST';
-  var K = { sessao: 'ponto.sessao', fila: 'ponto.fila', hist: 'ponto.historico', rascunho: 'ponto.rascunhoAtividades' };
+  var K = { sessao: 'ponto.sessao', fila: 'ponto.fila', hist: 'ponto.historico', rascunho: 'ponto.rascunhoAtividades', turma: 'ponto.turma' };
   var MIN_ATIVIDADES = 10;
   var $ = function (id) { return document.getElementById(id); };
 
@@ -21,9 +22,14 @@
 
   // ------------------------------------------------------------ API
 
-  function chamar(corpo) {
+  function turmaPorId(id) { return TURMAS.filter(function (t) { return t.id === id; })[0]; }
+
+  // sessões antigas (antes de haver várias turmas) usam a primeira turma
+  function apiDaSessao() { return sessao.api || TURMAS[0].api; }
+
+  function chamar(corpo, api) {
     // text/plain evita o "preflight" CORS, que o Apps Script não suporta
-    return fetch(API, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(corpo) })
+    return fetch(api, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(corpo) })
       .then(function (r) { return r.json(); });
   }
 
@@ -33,7 +39,23 @@
     ['tela-login', 'tela-principal'].forEach(function (t) { $(t).hidden = t !== tela; });
   }
 
+  function montarTurmas() {
+    var sel = $('turma');
+    TURMAS.forEach(function (t) {
+      var o = document.createElement('option'); o.value = t.id; o.textContent = t.nome; sel.appendChild(o);
+    });
+    var daUrl = new URLSearchParams(location.search).get('turma');
+    var escolhida = turmaPorId(daUrl) || turmaPorId(ler(K.turma, '')) || (TURMAS.length === 1 ? TURMAS[0] : null);
+    if (!escolhida) {
+      var vazio = document.createElement('option'); vazio.value = ''; vazio.textContent = 'Escolha…';
+      sel.insertBefore(vazio, sel.firstChild);
+    }
+    sel.value = escolhida ? escolhida.id : '';
+    $('campo-turma').hidden = TURMAS.length < 2;
+  }
+
   function iniciar() {
+    montarTurmas();
     atualizarRede();
     if (sessao && sessao.precisaLogin) pedirRelogin();
     else if (sessao) { mostrar('tela-principal'); renderizar(); sincronizar(); }
@@ -45,6 +67,8 @@
   function pedirRelogin() {
     $('matricula').value = sessao.matricula;
     $('matricula').readOnly = true;
+    if (sessao.turma) $('turma').value = sessao.turma;
+    $('turma').disabled = true;
     mostrar('tela-login');
   }
 
@@ -143,15 +167,20 @@
     ev.preventDefault();
     $('erro-login').textContent = '';
     if (!navigator.onLine) { $('erro-login').textContent = 'Sem internet. O primeiro acesso precisa de conexão.'; return; }
+    var turma = turmaPorId($('turma').value);
+    if (!turma) { $('erro-login').textContent = 'Escolha o(a) professor(a).'; return; }
     var btn = ev.submitter || $('form-login').querySelector('button');
     btn.disabled = true;
-    chamar({ action: 'login', matricula: $('matricula').value.trim(), pin: $('pin').value.trim() })
+    chamar({ action: 'login', matricula: $('matricula').value.trim(), pin: $('pin').value.trim() }, turma.api)
       .then(function (r) {
         if (!r.ok) throw new Error(r.erro || 'Falha no login');
-        sessao = { matricula: r.matricula, nome: r.nome, token: r.token, locais: r.locais, lastServerTime: r.serverTime };
+        sessao = { matricula: r.matricula, nome: r.nome, token: r.token, locais: r.locais, lastServerTime: r.serverTime,
+          turma: turma.id, api: turma.api };
         gravar(K.sessao, sessao);
+        gravar(K.turma, turma.id);
         $('pin').value = '';
         $('matricula').readOnly = false;
+        $('turma').disabled = false;
         mostrar('tela-principal');
         renderizar();
         sincronizar();
@@ -380,7 +409,7 @@
     if (!sessao || !fila.length || sincronizando || !navigator.onLine) { if (sessao) renderizar(); return; }
     sincronizando = true;
     $('btn-sync').disabled = true;
-    chamar({ action: 'sync', matricula: sessao.matricula, token: sessao.token, clientNow: Date.now(), registros: fila })
+    chamar({ action: 'sync', matricula: sessao.matricula, token: sessao.token, clientNow: Date.now(), registros: fila }, apiDaSessao())
       .then(function (r) {
         if (!r.ok) {
           if (r.relogin) {
