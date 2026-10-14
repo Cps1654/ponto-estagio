@@ -3,10 +3,9 @@
 (function () {
   'use strict';
 
-  var CFG = window.PONTO_CONFIG;
-  var TURMAS = CFG.TURMAS || [{ id: 'padrao', nome: 'Professor(a)', api: CFG.API_URL }];
+  var API = window.PONTO_CONFIG.API_URL;
   var QR_PREFIXO = 'PONTOEST';
-  var K = { sessao: 'ponto.sessao', fila: 'ponto.fila', hist: 'ponto.historico', rascunho: 'ponto.rascunhoAtividades', turma: 'ponto.turma' };
+  var K = { sessao: 'ponto.sessao', fila: 'ponto.fila', hist: 'ponto.historico', rascunho: 'ponto.rascunhoAtividades' };
   var MIN_ATIVIDADES = 10;
   var $ = function (id) { return document.getElementById(id); };
 
@@ -22,14 +21,9 @@
 
   // ------------------------------------------------------------ API
 
-  function turmaPorId(id) { return TURMAS.filter(function (t) { return t.id === id; })[0]; }
-
-  // sessões antigas (antes de haver várias turmas) usam a primeira turma
-  function apiDaSessao() { return sessao.api || TURMAS[0].api; }
-
-  function chamar(corpo, api) {
+  function chamar(corpo) {
     // text/plain evita o "preflight" CORS, que o Apps Script não suporta
-    return fetch(api, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(corpo) })
+    return fetch(API, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(corpo) })
       .then(function (r) { return r.json(); });
   }
 
@@ -39,23 +33,34 @@
     ['tela-login', 'tela-principal'].forEach(function (t) { $(t).hidden = t !== tela; });
   }
 
-  function montarTurmas() {
-    var sel = $('turma');
-    TURMAS.forEach(function (t) {
-      var o = document.createElement('option'); o.value = t.id; o.textContent = t.nome; sel.appendChild(o);
-    });
-    var daUrl = new URLSearchParams(location.search).get('turma');
-    var escolhida = turmaPorId(daUrl) || turmaPorId(ler(K.turma, '')) || (TURMAS.length === 1 ? TURMAS[0] : null);
-    if (!escolhida) {
-      var vazio = document.createElement('option'); vazio.value = ''; vazio.textContent = 'Escolha…';
-      sel.insertBefore(vazio, sel.firstChild);
+  // ------------------------------------------------------------ professor(a) responsável
+
+  function montarProfessores() {
+    var lista = sessao.professores || [];
+    var valido = lista.some(function (p) { return p.id === sessao.professor; });
+    if (!valido) sessao.professor = lista.length === 1 ? lista[0].id : '';
+    var sel = $('professor');
+    sel.innerHTML = '';
+    if (!sessao.professor) {
+      var vazio = document.createElement('option'); vazio.value = ''; vazio.textContent = 'Escolha…'; sel.appendChild(vazio);
     }
-    sel.value = escolhida ? escolhida.id : '';
-    $('campo-turma').hidden = TURMAS.length < 2;
+    lista.forEach(function (p) {
+      var o = document.createElement('option'); o.value = p.id; o.textContent = p.nome; sel.appendChild(o);
+    });
+    sel.value = sessao.professor || '';
+    $('campo-professor').hidden = !lista.length; // planilha sem professores cadastrados: não pede
+  }
+
+  $('professor').addEventListener('change', function () {
+    sessao.professor = this.value; gravar(K.sessao, sessao); montarProfessores();
+  });
+
+  function nomeProfessor(id) {
+    var p = (sessao.professores || []).filter(function (x) { return x.id === id; })[0];
+    return p ? p.nome : '';
   }
 
   function iniciar() {
-    montarTurmas();
     atualizarRede();
     if (sessao && sessao.precisaLogin) pedirRelogin();
     else if (sessao) { mostrar('tela-principal'); renderizar(); sincronizar(); }
@@ -67,8 +72,6 @@
   function pedirRelogin() {
     $('matricula').value = sessao.matricula;
     $('matricula').readOnly = true;
-    if (sessao.turma) $('turma').value = sessao.turma;
-    $('turma').disabled = true;
     mostrar('tela-login');
   }
 
@@ -84,6 +87,7 @@
 
   function renderizar() {
     $('nome-aluno').textContent = sessao.nome;
+    montarProfessores();
     var hist = ler(K.hist, []);
     var fila = ler(K.fila, []);
     var ultima = hist[0];
@@ -115,7 +119,8 @@
       meio.textContent = fmtHora(b.deviceTime);
       var sub = document.createElement('span');
       sub.className = 'sub';
-      sub.textContent = (b.localNome || '') + (b.distancia != null ? ' · ' + b.distancia + ' m' : '') + (b.lat == null ? ' · sem GPS' : '');
+      sub.textContent = (b.localNome || '') + (b.distancia != null ? ' · ' + b.distancia + ' m' : '') + (b.lat == null ? ' · sem GPS' : '') +
+        (nomeProfessor(b.professor) ? ' · ' + nomeProfessor(b.professor) : '');
       meio.appendChild(sub);
       var st = document.createElement('span');
       st.className = 'sync' + (b.enviado ? '' : ' pendente');
@@ -167,20 +172,17 @@
     ev.preventDefault();
     $('erro-login').textContent = '';
     if (!navigator.onLine) { $('erro-login').textContent = 'Sem internet. O primeiro acesso precisa de conexão.'; return; }
-    var turma = turmaPorId($('turma').value);
-    if (!turma) { $('erro-login').textContent = 'Escolha o(a) professor(a).'; return; }
     var btn = ev.submitter || $('form-login').querySelector('button');
     btn.disabled = true;
-    chamar({ action: 'login', matricula: $('matricula').value.trim(), pin: $('pin').value.trim() }, turma.api)
+    var anterior = sessao; // relogin: mantém o professor escolhido
+    chamar({ action: 'login', matricula: $('matricula').value.trim(), pin: $('pin').value.trim() })
       .then(function (r) {
         if (!r.ok) throw new Error(r.erro || 'Falha no login');
-        sessao = { matricula: r.matricula, nome: r.nome, token: r.token, locais: r.locais, lastServerTime: r.serverTime,
-          turma: turma.id, api: turma.api };
+        sessao = { matricula: r.matricula, nome: r.nome, token: r.token, locais: r.locais, professores: r.professores || [],
+          professor: anterior && anterior.matricula === r.matricula ? anterior.professor : '', lastServerTime: r.serverTime };
         gravar(K.sessao, sessao);
-        gravar(K.turma, turma.id);
         $('pin').value = '';
         $('matricula').readOnly = false;
-        $('turma').disabled = false;
         mostrar('tela-principal');
         renderizar();
         sincronizar();
@@ -225,6 +227,10 @@
       resultado(false, 'Já registrado', 'Você registrou ' + (tipo === 'entrada' ? 'ENTRADA' : 'SAÍDA') + ' há menos de 2 minutos.');
       return;
     }
+    if ((sessao.professores || []).length && !sessao.professor) {
+      resultado(false, 'Escolha o professor', 'Selecione o(a) professor(a) responsável antes de registrar o ponto.');
+      return;
+    }
     tipoAtual = tipo;
     modoAtual = modo;
     atividadesAtual = '';
@@ -248,6 +254,7 @@
   }
 
   function abrirAtividades() {
+    $('btn-continuar-ativ').textContent = modoAtual === 'remoto' ? 'Registrar SAÍDA remota' : 'Continuar para o QR';
     $('atividades').value = ler(K.rascunho, '') || '';
     atualizarContador();
     $('tela-atividades').hidden = false;
@@ -315,7 +322,8 @@
         localNome: info.local.nome, lat: gps.lat, lng: gps.lng, acc: gps.acc, gpsTime: gps.gpsTime,
         gpsErro: gps.erro || '', lastServerTime: sessao.lastServerTime, offline: !navigator.onLine,
         atividades: tipoAtual === 'saida' ? atividadesAtual : '',
-        modo: info.remoto ? 'remoto' : 'presencial'
+        modo: info.remoto ? 'remoto' : 'presencial',
+        professor: sessao.professor || ''
       };
       if (b.atividades) localStorage.removeItem(K.rascunho);
       if (gps.lat != null && !info.remoto) b.distancia = Math.round(distanciaM(gps.lat, gps.lng, info.local.lat, info.local.lng));
@@ -409,7 +417,7 @@
     if (!sessao || !fila.length || sincronizando || !navigator.onLine) { if (sessao) renderizar(); return; }
     sincronizando = true;
     $('btn-sync').disabled = true;
-    chamar({ action: 'sync', matricula: sessao.matricula, token: sessao.token, clientNow: Date.now(), registros: fila }, apiDaSessao())
+    chamar({ action: 'sync', matricula: sessao.matricula, token: sessao.token, clientNow: Date.now(), registros: fila })
       .then(function (r) {
         if (!r.ok) {
           if (r.relogin) {
@@ -422,7 +430,10 @@
         var ok = {}; (r.aceitos || []).forEach(function (id) { ok[id] = true; });
         gravar(K.fila, ler(K.fila, []).filter(function (b) { return !ok[b.id]; }));
         gravar(K.hist, ler(K.hist, []).map(function (b) { if (ok[b.id]) b.enviado = true; return b; }));
-        sessao.lastServerTime = r.serverTime; gravar(K.sessao, sessao);
+        sessao.lastServerTime = r.serverTime;
+        if (r.locais) sessao.locais = r.locais;
+        if (r.professores) sessao.professores = r.professores;
+        gravar(K.sessao, sessao);
       })
       .catch(function () { /* sem conexão de verdade; tenta depois */ })
       .then(function () { sincronizando = false; $('btn-sync').disabled = false; renderizar(); });

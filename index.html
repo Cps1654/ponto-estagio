@@ -24,9 +24,6 @@
   <main id="tela-login" class="tela" hidden>
     <form id="form-login" class="cartao">
       <h2>Entrar</h2>
-      <label id="campo-turma" hidden>Professor(a)
-        <select id="turma" required></select>
-      </label>
       <label>Matrícula
         <input id="matricula" inputmode="numeric" autocomplete="username" required>
       </label>
@@ -44,6 +41,9 @@
     <section class="cartao">
       <p class="ola">Olá, <strong id="nome-aluno"></strong></p>
       <p id="estado" class="estado"></p>
+      <label id="campo-professor" hidden>Professor(a) responsável
+        <select id="professor"></select>
+      </label>
       <div class="modo" role="radiogroup" aria-label="Onde você está trabalhando">
         <button type="button" data-modo="presencial" role="radio">🏢 No local</button>
         <button type="button" data-modo="remoto" role="radio">🏠 Remoto</button>
@@ -94,7 +94,7 @@
       <textarea id="atividades" rows="5" maxlength="1000" required
         placeholder="Ex.: preparo de lâminas, leitura de artigo, coleta no viveiro…"></textarea>
       <p id="contador" class="dica"></p>
-      <button type="submit" class="btn saida">Continuar para o QR</button>
+      <button type="submit" id="btn-continuar-ativ" class="btn saida">Continuar para o QR</button>
       <button type="button" id="btn-cancelar-ativ" class="btn link">Cancelar</button>
     </form>
   </div>
