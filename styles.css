@@ -80,6 +80,11 @@ input {
 .botoes { display: grid; gap: 12px; }
 @media (prefers-color-scheme: dark) { .btn.primario, .btn.entrada, .btn.saida { color: #0d120f; } }
 
+.modo { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border-radius: 12px; background: var(--fundo); border: 1px solid var(--borda); }
+.modo button { border: 0; border-radius: 9px; padding: 10px 6px; font: inherit; font-weight: 600; background: none; color: var(--suave); cursor: pointer; }
+.modo button[aria-checked="true"] { background: var(--cartao); color: var(--texto); box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+#modo-dica { margin: 8px 0 14px; }
+.tag.remoto { margin-left: 4px; background: var(--fundo); color: var(--suave); border: 1px solid var(--borda); }
 .linha { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .linha h2 { margin: 0; }
 .ola { margin: 0 0 4px; }

@@ -41,6 +41,11 @@
     <section class="cartao">
       <p class="ola">Olá, <strong id="nome-aluno"></strong></p>
       <p id="estado" class="estado"></p>
+      <div class="modo" role="radiogroup" aria-label="Onde você está trabalhando">
+        <button type="button" data-modo="presencial" role="radio">🏢 No local</button>
+        <button type="button" data-modo="remoto" role="radio">🏠 Remoto</button>
+      </div>
+      <p id="modo-dica" class="dica"></p>
       <div class="botoes">
         <button id="btn-entrada" class="btn grande entrada">Registrar ENTRADA</button>
         <button id="btn-saida" class="btn grande saida">Registrar SAÍDA</button>

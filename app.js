@@ -66,6 +66,9 @@
     var sugerido = ultima && ultima.tipo === 'entrada' ? 'saida' : 'entrada';
     $('btn-entrada').classList.toggle('sugerido', sugerido === 'entrada');
     $('btn-saida').classList.toggle('sugerido', sugerido === 'saida');
+    // com uma entrada em aberto, a saída segue o mesmo modo (a menos que o aluno troque)
+    if (!modoEscolhido) modo = ultima && ultima.tipo === 'entrada' && ultima.modo === 'remoto' ? 'remoto' : 'presencial';
+    aplicarModo();
     $('estado').textContent = ultima
       ? 'Última batida: ' + (ultima.tipo === 'entrada' ? 'ENTRADA' : 'SAÍDA') + ' em ' + fmtHora(ultima.deviceTime) + (ultima.localNome ? ' (' + ultima.localNome + ')' : '')
       : 'Nenhuma batida registrada neste celular ainda.';
@@ -80,6 +83,10 @@
       var tag = document.createElement('span');
       tag.className = 'tag ' + b.tipo;
       tag.textContent = b.tipo === 'entrada' ? 'ENTRADA' : 'SAÍDA';
+      if (b.modo === 'remoto') {
+        var tr = document.createElement('span'); tr.className = 'tag remoto'; tr.textContent = '🏠';
+        var caixa = document.createElement('span'); caixa.appendChild(tag); caixa.appendChild(tr); tag = caixa;
+      }
       var meio = document.createElement('span');
       meio.textContent = fmtHora(b.deviceTime);
       var sub = document.createElement('span');
@@ -93,6 +100,26 @@
       ul.appendChild(li);
     });
   }
+
+  // ------------------------------------------------------------ modo: no local (QR) ou remoto (sem QR)
+
+  var modo = 'presencial', modoEscolhido = false;
+
+  function aplicarModo() {
+    Array.prototype.forEach.call(document.querySelectorAll('.modo button'), function (b) {
+      b.setAttribute('aria-checked', String(b.getAttribute('data-modo') === modo));
+    });
+    var r = modo === 'remoto';
+    $('btn-entrada').textContent = r ? 'Registrar ENTRADA remota' : 'Registrar ENTRADA';
+    $('btn-saida').textContent = r ? 'Registrar SAÍDA remota' : 'Registrar SAÍDA';
+    $('modo-dica').textContent = r
+      ? 'Trabalho de casa: não precisa de QR. As horas remotas aparecem separadas para o professor.'
+      : 'No local de estágio: você vai escanear o QR fixado no local.';
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll('.modo button'), function (b) {
+    b.addEventListener('click', function () { modo = b.getAttribute('data-modo'); modoEscolhido = true; aplicarModo(); });
+  });
 
   function resultado(ok, titulo, detalhe) {
     $('res-icone').textContent = ok ? '✅' : '⚠️';
@@ -144,7 +171,7 @@
 
   // ------------------------------------------------------------ batida
 
-  var tipoAtual = null, gpsPromessa = null;
+  var tipoAtual = null, modoAtual = 'presencial', gpsPromessa = null;
 
   function obterGps() {
     return new Promise(function (resolve) {
@@ -170,6 +197,7 @@
       return;
     }
     tipoAtual = tipo;
+    modoAtual = modo;
     atividadesAtual = '';
     if (tipo === 'saida') { abrirAtividades(); return; }
     iniciarLeitura();
@@ -177,7 +205,8 @@
 
   function iniciarLeitura() {
     gpsPromessa = obterGps(); // começa o GPS junto com a câmera para ganhar tempo
-    abrirScanner();
+    if (modoAtual === 'remoto') gravarBatida({ remoto: true, texto: 'REMOTO', local: { nome: 'Remoto' } });
+    else abrirScanner();
   }
 
   // ------------------------------------------------------------ atividades do dia (antes da saída)
@@ -239,7 +268,12 @@
     var info = localDoQr(qrTexto);
     if (!info) { resultado(false, 'QR inválido', 'Este QR code não é de um local de estágio.'); return; }
     if (!info.local) { resultado(false, 'Local desconhecido', 'Este QR não está na sua lista de locais. Entre com internet e faça login de novo, ou fale com o professor.'); return; }
-    var deviceTime = Date.now(); // hora do momento em que o QR foi lido
+    gravarBatida(info);
+  }
+
+  // info: {local, texto} de um QR válido, ou {remoto:true, ...} para trabalho remoto
+  function gravarBatida(info) {
+    var deviceTime = Date.now(); // hora do momento em que o QR foi lido (ou do toque, no remoto)
     $('res-icone').textContent = '📍';
     $('res-titulo').textContent = 'Obtendo localização…';
     $('res-detalhe').textContent = 'Fique parado alguns segundos.';
@@ -251,10 +285,11 @@
         id: uuid(), tipo: tipoAtual, deviceTime: deviceTime, qr: info.texto,
         localNome: info.local.nome, lat: gps.lat, lng: gps.lng, acc: gps.acc, gpsTime: gps.gpsTime,
         gpsErro: gps.erro || '', lastServerTime: sessao.lastServerTime, offline: !navigator.onLine,
-        atividades: tipoAtual === 'saida' ? atividadesAtual : ''
+        atividades: tipoAtual === 'saida' ? atividadesAtual : '',
+        modo: info.remoto ? 'remoto' : 'presencial'
       };
       if (b.atividades) localStorage.removeItem(K.rascunho);
-      if (gps.lat != null) b.distancia = Math.round(distanciaM(gps.lat, gps.lng, info.local.lat, info.local.lng));
+      if (gps.lat != null && !info.remoto) b.distancia = Math.round(distanciaM(gps.lat, gps.lng, info.local.lat, info.local.lng));
 
       var fila = ler(K.fila, []); fila.push(b); gravar(K.fila, fila);
       var hist = ler(K.hist, []); hist.unshift(b); gravar(K.hist, hist.slice(0, 200));
@@ -262,8 +297,8 @@
       $('btn-ok').hidden = false;
 
       var aviso = [];
-      if (gps.erro) aviso.push('Localização não obtida (' + gps.erro + '). O registro foi salvo, mas o professor verá o alerta.');
-      else if (b.distancia > info.local.raio + Math.min(gps.acc, 150)) aviso.push('Você parece estar a ' + b.distancia + ' m do local (limite ' + info.local.raio + ' m). O registro será marcado para revisão.');
+      if (gps.erro && !info.remoto) aviso.push('Localização não obtida (' + gps.erro + '). O registro foi salvo, mas o professor verá o alerta.');
+      else if (!info.remoto && b.distancia > info.local.raio + Math.min(gps.acc, 150)) aviso.push('Você parece estar a ' + b.distancia + ' m do local (limite ' + info.local.raio + ' m). O registro será marcado para revisão.');
       var texto = (tipoAtual === 'entrada' ? 'ENTRADA' : 'SAÍDA') + ' · ' + fmtHora(deviceTime) + '\n' + info.local.nome +
         (gps.acc ? ' · GPS ±' + gps.acc + ' m' : '') +
         (navigator.onLine ? '' : '\n\nVocê está offline: o registro será enviado quando houver internet.') +
