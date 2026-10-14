@@ -63,7 +63,7 @@
   function iniciar() {
     atualizarRede();
     if (sessao && sessao.precisaLogin) pedirRelogin();
-    else if (sessao) { mostrar('tela-principal'); renderizar(); sincronizar(); }
+    else if (sessao) { mostrar('tela-principal'); renderizar(); sincronizar(true); }
     else mostrar('tela-login');
     dicaInstalar();
   }
@@ -412,9 +412,13 @@
   // ------------------------------------------------------------ sincronização
 
   var sincronizando = false;
-  function sincronizar() {
+  // atualizar=true também conversa com a planilha sem pendências, para trazer professores e locais novos
+  function sincronizar(atualizar) {
     var fila = ler(K.fila, []);
-    if (!sessao || !fila.length || sincronizando || !navigator.onLine) { if (sessao) renderizar(); return; }
+    if (!sessao || sessao.precisaLogin || (!fila.length && atualizar !== true) || sincronizando || !navigator.onLine) {
+      if (sessao && !sessao.precisaLogin) renderizar();
+      return;
+    }
     sincronizando = true;
     $('btn-sync').disabled = true;
     chamar({ action: 'sync', matricula: sessao.matricula, token: sessao.token, clientNow: Date.now(), registros: fila })
@@ -441,14 +445,14 @@
 
   $('btn-sync').addEventListener('click', function () {
     if (!navigator.onLine) { resultado(false, 'Sem internet', 'Os registros serão enviados quando o celular se conectar.'); return; }
-    sincronizar();
+    sincronizar(true);
   });
 
   // relogin sem perder a fila: se a sessão for inválida, a tela de login aparece e a fila é preservada
-  window.addEventListener('online', function () { atualizarRede(); sincronizar(); });
+  window.addEventListener('online', function () { atualizarRede(); sincronizar(true); });
   window.addEventListener('offline', atualizarRede);
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) sincronizar(); });
-  setInterval(sincronizar, 60000);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) sincronizar(true); });
+  setInterval(sincronizar, 60000); // a cada minuto, só se houver pendências
 
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {});
 

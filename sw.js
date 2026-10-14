@@ -1,5 +1,5 @@
 // Guarda o app no celular para abrir sem internet. Ao alterar arquivos, mude a VERSAO.
-var VERSAO = 'ponto-v5';
+var VERSAO = 'ponto-v6';
 var ARQUIVOS = ['./', 'index.html', 'styles.css', 'app.js', 'config.js', 'vendor/jsQR.js',
   'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
